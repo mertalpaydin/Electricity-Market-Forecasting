@@ -1,0 +1,15 @@
+# To install PyTorch with CUDA support, use the following command (check cuda version):
+# pip install -r requirements.txt --index-url https://download.pytorch.org/whl/cu128
+
+pandas
+numpy
+scikit-learn
+matplotlib
+lightgbm
+jupyterlab
+optuna
+torch
+torchvision
+torchaudio
+darts[pytorch]
+pyarrow
