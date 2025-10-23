@@ -6,6 +6,10 @@ __pycache__/
 # C extensions
 *.so
 
+# data files
+data/TEST_Reco_2024.csv
+data/TRAIN_Reco_2021_2022_2023.csv
+
 # IDEA
 .venv
 .idea
