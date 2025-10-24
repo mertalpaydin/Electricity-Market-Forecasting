@@ -213,3 +213,9 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Data directories
+data/per_asset_parquet/
+data/scalers/
+data/train/
+data/val/

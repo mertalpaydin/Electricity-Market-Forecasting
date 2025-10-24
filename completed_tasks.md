@@ -14,13 +14,13 @@
     - Yields `(past, future, mask, asset_id, past_ts)` tuples lazily.
     - Minimizes memory footprint by only keeping active batches in RAM.
 - Integrated with `torch.utils.data.DataLoader` and `pytorch_lightning.LightningDataModule` for efficient batching and GPU feeding.
+- Refactored `data_loader.py` to be solely responsible for converting the raw CSV to per-asset parquet files.
 
-### Phase 1: Data Exploration, Preprocessing, and Feature Engineering (Partial)
-- **Preprocessing Script (`src/data_loader.py` and `src/datamodule.py`):**
-    - `split_csv_to_parquet` function created to transform raw CSV data into per-asset parquet files.
-    - `fit_and_save_scalers` function created to fit `StandardScaler` for each asset on non-zero training data and save them.
-    - Data loading now handles `ExecutionTime` as datetime and groups by `ID`.
-    - Targets (`high`, `low`, `close`, `volume`) are extracted.
-    - `is_trading` binary flag is computed based on `volume > 0`.
-    - Scaling is applied on the fly within the `IterableDataset`.
-- **Data Splitting (Conceptual):** The `ElectricityDataModule` is designed to work with `train`, `val`, and `test` parquet directories, implying a chronological split will be handled by preparing these directories.
+### Phase 1: Data Exploration, Preprocessing, and Feature Engineering
+- **Preprocessing Script (`src/preprocess.py`):**
+    - Created a dedicated `preprocess.py` script to handle all feature engineering, data splitting, and scaler fitting.
+    - `feature_engineer` function created to add time-based features (`hour_of_day`, `day_of_week`, etc.) and an `is_trading` flag.
+    - `split_data_by_year` function created to split the data into `train` (2021-2022) and `val` (2023) sets.
+    - `fit_and_save_scalers` function created to fit `StandardScaler` for each asset on non-zero training data and save them to `data/scalers`.
+- **Documentation:**
+    - Added comprehensive docstrings and comments to all functions and classes in `src/data_loader.py`, `src/datamodule.py`, and `src/preprocess.py`.

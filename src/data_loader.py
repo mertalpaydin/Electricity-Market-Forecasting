@@ -8,15 +8,11 @@ import numpy as np
 import pandas as pd
 import torch
 from torch.utils.data import IterableDataset, get_worker_info
-from sklearn.preprocessing import StandardScaler
 import pyarrow as pa
 import pyarrow.csv
 import pyarrow.parquet as pq
 from tqdm import tqdm
-
-# ---------------------------
-# Part A: CSV -> per-asset parquet
-# ---------------------------
+import math
 
 def split_csv_to_parquet(
         csv_path: str,
@@ -28,61 +24,61 @@ def split_csv_to_parquet(
         force: bool = False,
 ):
     """
-    Memory-safe CSV -> per-asset parquet splitter using a two-pass approach.
-    Pass 1: Stream CSV in chunks, append rows to per-asset *temporary CSVs*.
-    Pass 2: Convert each temporary CSV to a *sorted* parquet file using pyarrow.
+    Converts a large CSV file into a directory of smaller, per-asset Parquet files.
 
-    - csv_path: path to large CSV file
-    - out_dir: output directory (created if needed)
-    - id_col: column name containing asset info
-    - timestamp_col: column name containing datetime info
-    - chunksize: number of rows per chunk to read (adjust to memory)
-    - force: if True, re-write all parquet files even if they exist
+    This function uses a memory-efficient, two-pass approach:
+    1.  **Pass 1:** It streams the input CSV in chunks, appending each row to a
+        temporary CSV file specific to the asset ID. This avoids loading the entire
+        dataset into memory.
+    2.  **Pass 2:** It then reads each temporary CSV, sorts the data by timestamp
+        in memory (as per-asset data should be manageable), and writes the sorted
+        data to a compressed Parquet file.
+
+    Finally, it creates an `assets.json` file listing all generated asset file names.
+
+    Args:
+        csv_path (str): Path to the large input CSV file.
+        out_dir (str): Directory to save the output Parquet files.
+        id_col (str): The column name in the CSV that identifies the asset.
+        timestamp_col (str): The column name for the timestamp.
+        target_cols (List[str]): A list of column names to be included in the output.
+        chunksize (int): The number of rows to read from the CSV at a time.
+        force (bool): If True, existing Parquet files will be overwritten.
     """
     os.makedirs(out_dir, exist_ok=True)
     assets_seen = set()
-    temp_dir = os.path.join(out_dir, "_tmp_append")
+    temp_dir = os.path.join(out_dir, "_append")
     os.makedirs(temp_dir, exist_ok=True)
 
     print(f"[split] streaming CSV {csv_path} in chunksize={chunksize}")
 
-    # --------------------------------------------------------------------------
-    # PASS 1: Stream main CSV and append to per-asset temporary CSVs
-    # --------------------------------------------------------------------------
+    total_rows = sum(1 for _ in open(csv_path)) - 1
+    total_chunks = math.ceil(total_rows / chunksize)
+    print(f"[split] Found {total_rows} rows in {total_chunks} chunks.")
 
-    # Iterate through CSV in chunks and append rows to per-asset temp CSVs (then convert to parquet)
-    for chunk in pd.read_csv(csv_path, parse_dates=[timestamp_col], chunksize=chunksize):
+    chunk_iterator = pd.read_csv(
+        csv_path,
+        parse_dates=[timestamp_col],
+        infer_datetime_format=True,
+        chunksize=chunksize
+    )
 
-        # Ensure timestamp is datetime and UTC-aware
+    for chunk in tqdm(chunk_iterator, total=total_chunks, desc="[split] PASS 1: Reading CSV"):
         chunk[timestamp_col] = pd.to_datetime(chunk[timestamp_col], utc=True)
-
-        # compute is_trading mask once
-        chunk["is_trading"] = (chunk[target_cols].abs().sum(axis=1) > 0).astype(np.float32)
-
-        store_cols = [timestamp_col] + target_cols + ["is_trading"]
-
-        # group by asset and append to small per-asset CSVs in temp_dir
+        store_cols = [timestamp_col] + target_cols
         for asset, g in chunk.groupby(id_col):
             assets_seen.add(str(asset))
             temp_path = os.path.join(temp_dir, f"{asset}.csv")
-            # append without header if file exists
             header = not os.path.exists(temp_path)
             g[store_cols].to_csv(temp_path, mode="a", header=header, index=False)
 
     print("[split] PASS 1 complete.")
-
-    # --------------------------------------------------------------------------
-    # PASS 2: Convert each temp CSV to a SORTED parquet file using pyarrow
-    # --------------------------------------------------------------------------
-
     print(f"[split] PASS 2: converting {len(assets_seen)} temp CSVs to sorted parquet...")
     assets = sorted(list(assets_seen))
 
-    # Define pyarrow CSV read options
-    # We must tell it which column to parse as a timestamp
     convert_options = pa.csv.ConvertOptions(
         column_types={timestamp_col: pa.timestamp('ns', tz='UTC')},
-        include_columns=[timestamp_col] + target_cols + ["is_trading"]
+        include_columns=[timestamp_col] + target_cols
     )
     read_options = pa.csv.ReadOptions(autogenerate_column_names=False)
 
@@ -90,138 +86,88 @@ def split_csv_to_parquet(
         out_path = os.path.join(out_dir, f"{asset}.parquet")
         if os.path.exists(out_path) and not force:
             continue
-
         tmp_csv = os.path.join(temp_dir, f"{asset}.csv")
         if not os.path.exists(tmp_csv):
             continue
-
-
         try:
             table = pa.csv.read_csv(tmp_csv, read_options=read_options, convert_options=convert_options)
         except Exception as e:
             print(f"[split] pyarrow failed for {tmp_csv}: {e}. Falling back to pandas.")
             df = pd.read_csv(tmp_csv, parse_dates=[timestamp_col])
             df[timestamp_col] = pd.to_datetime(df[timestamp_col], utc=True)
-            df = df[[timestamp_col] + target_cols + ["is_trading"]]
+            df = df[[timestamp_col] + target_cols]
             table = pa.Table.from_pandas(df)
-
-
-        # Sort the table in-memory by timestamp
         sorted_table = table.sort_by([(timestamp_col, 'ascending')])
-
-        # Write the sorted table to a parquet file
         pq.write_table(sorted_table, out_path, compression='snappy')
-
-        # remove temp csv to save space
         os.remove(tmp_csv)
-
-    # cleanup temp dir
     try:
         os.rmdir(temp_dir)
     except OSError:
-        pass # Dir not empty if some files failed, which is fine
-
-    # write assets.json (list what's actually on disk)
+        pass
     final_assets = [os.path.splitext(os.path.basename(p))[0] for p in glob.glob(os.path.join(out_dir, "*.parquet"))]
     assets_json = os.path.join(out_dir, "assets.json")
     with open(assets_json, "w") as f:
         json.dump(final_assets, f)
-
     print(f"[split] created {len(final_assets)} per-asset parquet files in {out_dir}")
     return final_assets
 
-
-# ---------------------------
-# Part A.2: Fit & save per-asset scalers (train-only)
-# ---------------------------
-
-def fit_and_save_scalers(
-        parquet_dir: str,
-        scalers_dir: str,
-        target_cols: List[str] = ["high", "low", "close", "volume"],
-        timestamp_col: str = "ExecutionTime",
-        min_nonzero: int = 10,
-        train_time_cutoff: Optional[pd.Timestamp] = None,
-):
-    """
-    Fit per-asset StandardScaler on non-zero training rows and save as pickle:
-      scalers_dir/<asset>_scaler.pkl
-
-    - parquet_dir: directory containing per-asset parquet files
-    - train_time_cutoff: if given, only rows with timestamp <= cutoff are used for fitting
-    - min_nonzero: minimum number of nonzero rows needed to fit a scaler (otherwise no scaler saved)
-    """
-    os.makedirs(scalers_dir, exist_ok=True)
-    assets_json = os.path.join(parquet_dir, "assets.json")
-    if os.path.exists(assets_json):
-        with open(assets_json, "r") as f:
-            assets = json.load(f)
-    else:
-        assets = [os.path.splitext(os.path.basename(p))[0] for p in glob.glob(os.path.join(parquet_dir, "*.parquet"))]
-
-    for asset in tqdm(assets, desc="[scalers] Fitting scalers"):
-        p = os.path.join(parquet_dir, f"{asset}.parquet")
-        if not os.path.exists(p):
-            continue
-
-        df = pd.read_parquet(p)
-        if train_time_cutoff is not None:
-            # keep only rows <= cutoff
-            if timestamp_col not in df.columns: # <-- ADD CHECK
-                print(f"Warning: {timestamp_col} not in {p}, skipping cutoff.")
-            else:
-                df = df[df[timestamp_col] <= train_time_cutoff]
-
-        # use is_trading (volume > 0) mask if present; fallback to non-all-zero rows
-        if "is_trading" in df.columns:
-            train_mask = (df["is_trading"] > 0).values
-        else:
-            train_mask = (df[target_cols].abs().sum(axis=1) > 0).values
-
-        save_path = os.path.join(scalers_dir, f"{asset}_scaler.pkl")
-
-        if train_mask.sum() < min_nonzero:
-            # do not save small scalers - remove if exists
-            if os.path.exists(save_path):
-                os.remove(save_path)
-            continue
-
-        scaler = StandardScaler()
-        scaler.fit(df.loc[train_mask, target_cols].values.astype(np.float32))
-        with open(save_path, "wb") as f:
-            pickle.dump(scaler, f)
-
-    print(f"[scalers] saved scalers (where applicable) to {scalers_dir}")
-
-
-# ---------------------------
-# Part B: IterableDataset (streaming)
-# ---------------------------
-
 class ElectricityPriceIterableDataset(IterableDataset):
     """
-    Streaming IterableDataset that reads per-asset parquet files one-by-one and yields windows.
+    A streaming dataset that reads and yields time series windows from pre-processed
+    Parquet files.
 
-    Yields: (past: Tensor L_in x C, future: Tensor L_out x C, mask: Tensor L_out x C, asset_id: str, past_ts: np.ndarray)
-    - past/future are scaled (if scalers_dir provided)
-    - mask: 1.0 for trading steps in the FUTURE, 0.0 for non-trading (used for masked sMAPE)
+    This dataset is designed to work with PyTorch's DataLoader for efficient,
+    multi-worker data loading. It reads data for one asset at a time, generates
+    all possible sliding windows, and then moves to the next asset. This approach
+    keeps memory usage low, as only one asset's data is loaded at a time.
+
+    The dataset expects that the Parquet files have already been processed by
+    `preprocess.py` and include an 'is_trading' column. It also applies on-the-fly
+    scaling using pre-fitted scalers.
+
+    Yields:
+        A tuple containing:
+        - past (torch.Tensor): The input window of shape (input_chunk_length, num_features).
+        - future (torch.Tensor): The target window of shape (output_chunk_length, num_features).
+        - mask (torch.Tensor): A binary mask for the future window, indicating
+          trading periods. Shape: (output_chunk_length, num_features).
+        - asset_id (str): The ID of the asset.
+        - past_ts (np.ndarray): The timestamps for the input window.
     """
-
     def __init__(
             self,
             parquet_dir: str,
+            scalers_dir: str,
             assets_list: Optional[List[str]] = None,
             input_chunk_length: int = 96,
             output_chunk_length: int = 10,
             target_cols: List[str] = ["high", "low", "close", "volume"],
             timestamp_col: str = "ExecutionTime",
-            scalers_dir: Optional[str] = None,
             shuffle_buffer: int = 0,
             stride: int = 1,
             min_length: Optional[int] = None,
     ):
+        """
+        Initializes the dataset.
+
+        Args:
+            parquet_dir (str): Directory containing the processed Parquet files.
+            scalers_dir (str): Directory containing the pre-fitted scalers.
+            assets_list (Optional[List[str]]): A specific list of assets to use.
+                If None, all assets in `parquet_dir` are used.
+            input_chunk_length (int): The length of the input window.
+            output_chunk_length (int): The length of the prediction window.
+            target_cols (List[str]): The names of the target columns to be used.
+            timestamp_col (str): The name of the timestamp column.
+            shuffle_buffer (int): If > 0, a buffer of this size is filled and
+                samples are drawn randomly from it, providing local shuffling.
+            stride (int): The step size for creating sliding windows.
+            min_length (Optional[int]): The minimum number of rows an asset's
+                DataFrame must have to be included.
+        """
         super().__init__()
         self.parquet_dir = parquet_dir
+        self.scalers_dir = scalers_dir
         assets_json = os.path.join(parquet_dir, "assets.json")
         if assets_list is None:
             if os.path.exists(assets_json):
@@ -236,39 +182,41 @@ class ElectricityPriceIterableDataset(IterableDataset):
         self.output_chunk_length = output_chunk_length
         self.target_cols = target_cols
         self.timestamp_col = timestamp_col
-        self.scalers_dir = scalers_dir
         self.shuffle_buffer = shuffle_buffer
         self.stride = stride
         self.min_length = min_length or (input_chunk_length + output_chunk_length)
         self.asset_paths = {a: os.path.join(parquet_dir, f"{a}.parquet") for a in self.assets}
-
-        # per-worker caches will be created lazily in worker process space
-        self._worker_scaler_cache = None
-        self._epoch = 0  # set by set_epoch
+        self._epoch = 0
 
     def set_epoch(self, epoch: int):
-        """Set epoch index (useful to make shuffling deterministic across epochs)."""
+        """
+        Sets the current epoch number. This is used to ensure that shuffling is
+        deterministic and reproducible across epochs, especially in a multi-worker setup.
+        """
         self._epoch = int(epoch)
 
     def _get_worker_cache(self):
-        """Create per-worker cache dictionary in process memory to avoid repeated IO."""
+        """
+        Creates or retrieves a cache specific to the current DataLoader worker.
+        This is used to store scalers in memory and avoid re-reading them from disk
+        for every asset.
+        """
         worker_info = get_worker_info()
         worker_id = worker_info.id if worker_info is not None else 0
-        # create a unique attribute per worker / process
         cache_attr = f"_worker_cache_{worker_id}"
         if not hasattr(self, cache_attr):
             setattr(self, cache_attr, {"scalers": {}})
         return getattr(self, cache_attr)
 
     def _load_scaler_for_asset(self, asset: str):
-        """Load scaler for an asset using per-worker cache."""
-        if self.scalers_dir is None:
-            return None
+        """
+        Loads the scaler for a given asset, using a worker-specific cache.
+        """
         cache = self._get_worker_cache()
         scaler_map = cache["scalers"]
         if asset in scaler_map:
             return scaler_map[asset]
-        path = os.path.join(self.scalers_dir, f"{asset}_scaler.pkl")
+        path = os.path.join(self.scalers_dir, f"{asset}_scaler.joblib")
         if os.path.exists(path):
             try:
                 with open(path, "rb") as f:
@@ -284,96 +232,70 @@ class ElectricityPriceIterableDataset(IterableDataset):
 
     def _iter_for_assets(self, assets_subset: List[str]):
         """
-        Internal generator: iterate through given assets and yield windows.
+        The core generator function that iterates through a subset of assets
+        and yields sliding windows.
         """
-        # set per-worker seeds deterministically using epoch to get reproducible shuffling
         worker_info = get_worker_info()
         worker_id = worker_info.id if worker_info is not None else 0
         seed = 1234 + self._epoch * 100 + worker_id
         rnd = random.Random(seed)
-
         buffer: List[Tuple[Any, ...]] = []
 
         for asset in assets_subset:
             path = self.asset_paths.get(asset)
             if not path or not os.path.exists(path):
                 continue
-
-            # read parquet into pandas (per-asset file; should be reasonably sized)
             try:
                 df = pd.read_parquet(path)
             except Exception:
-                # skip unreadable
                 continue
-
-            # quick sanity checks
             if self.timestamp_col not in df.columns:
                 continue
-
-            arr = df[self.target_cols].values.astype(np.float32)  # (N, C)
+            arr = df[self.target_cols].values.astype(np.float32)
             timestamps = df[self.timestamp_col].values
             n = arr.shape[0]
             if n < self.min_length:
                 continue
-
-            # trading mask from precomputed column
-            if "is_trading" in df.columns:
-                trading_mask = df["is_trading"].values.astype(np.float32)
-            else:
-                trading_mask = (np.abs(arr).sum(axis=1) > 0).astype(np.float32)
-
+            trading_mask = df["is_trading"].values.astype(np.float32)
             scaler = self._load_scaler_for_asset(asset)
-
             L_in = self.input_chunk_length
             L_out = self.output_chunk_length
-
-            # sliding windows
             for start in range(0, n - L_in - L_out + 1, self.stride):
-                x = arr[start : start + L_in]   # (L_in, C)
-                y = arr[start + L_in : start + L_in + L_out]  # (L_out, C)
+                x = arr[start : start + L_in]
+                y = arr[start + L_in : start + L_in + L_out]
                 past_ts = timestamps[start : start + L_in]
-                future_trading = trading_mask[start + L_in : start + L_in + L_out]  # (L_out,)
-
-                # apply scaler (fit on training non-zero rows beforehand)
+                future_trading = trading_mask[start + L_in : start + L_in + L_out]
                 if scaler is not None:
                     try:
                         x = scaler.transform(x)
                         y = scaler.transform(y)
                     except Exception:
-                        # fallback to identity if scaler fails
                         pass
-
                 mask = np.repeat(future_trading.reshape(-1, 1), repeats=len(self.target_cols), axis=1).astype(np.float32)
-
                 sample = (torch.from_numpy(x).float(),
                           torch.from_numpy(y).float(),
                           torch.from_numpy(mask).float(),
                           asset,
                           past_ts)
-
                 if self.shuffle_buffer > 0:
                     buffer.append(sample)
                     if len(buffer) >= self.shuffle_buffer:
-                        # pop a random element
                         idx = rnd.randrange(len(buffer))
                         yield buffer.pop(idx)
                 else:
                     yield sample
-
-        # flush buffer
         while self.shuffle_buffer > 0 and len(buffer) > 0:
             idx = rnd.randrange(len(buffer))
             yield buffer.pop(idx)
 
     def __iter__(self):
         """
-        Partition assets among workers deterministically and iterate assigned subset.
+        The main iterator method for the dataset. It handles the distribution of
+        assets among workers.
         """
-        # build the asset ordering per epoch (deterministic given epoch)
         assets_to_process = list(self.assets)
-        rnd = random.Random(1234 + self._epoch)  # epoch-level seed
+        rnd = random.Random(1234 + self._epoch)
         rnd.shuffle(assets_to_process)
-
         worker_info = get_worker_info()
         if worker_info is None:
             assets_subset = assets_to_process
@@ -381,19 +303,25 @@ class ElectricityPriceIterableDataset(IterableDataset):
             num_workers = worker_info.num_workers
             worker_id = worker_info.id
             assets_subset = [a for i, a in enumerate(assets_to_process) if i % num_workers == worker_id]
-
         yield from self._iter_for_assets(assets_subset)
-
-
-# ---------------------------
-# Collate function for DataLoader
-# ---------------------------
 
 def collate_fn(batch):
     """
-    Collate function stacks fixed-length windows into batched tensors.
-    batch: list of tuples from dataset: (past, future, mask, asset_id, past_ts)
-    returns: past (B, L_in, C), future (B, L_out, C), mask (B, L_out, C), asset_ids (list), past_ts_list (list)
+    A custom collate function for the DataLoader.
+
+    It takes a list of samples (each being a tuple from the dataset) and stacks
+    them into batches.
+
+    Args:
+        batch (list): A list of samples from the ElectricityPriceIterableDataset.
+
+    Returns:
+        A tuple of batched tensors and lists:
+        - past (torch.Tensor): Batched input windows.
+        - future (torch.Tensor): Batched target windows.
+        - mask (torch.Tensor): Batched mask tensors.
+        - asset_ids (list): A list of asset IDs in the batch.
+        - past_ts_list (list): A list of timestamp arrays for the input windows.
     """
     past_list, future_list, mask_list, asset_list, ts_list = zip(*batch)
     past = torch.stack(past_list, dim=0)
@@ -401,45 +329,12 @@ def collate_fn(batch):
     mask = torch.stack(mask_list, dim=0)
     return past, future, mask, list(asset_list), list(ts_list)
 
-
-# ---------------------------
-# Quick test / usage example (run as script)
-# ---------------------------
-
 if __name__ == "__main__":
-    # quick demo of preprocessing + scaler + dataloader
+    # This block demonstrates the primary purpose of this script: converting the
+    # raw CSV data into per-asset Parquet files.
     repo_root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
     raw_csv = os.path.join(repo_root, "data", "TRAIN_Reco_2021_2022_2023.csv")
     parquet_dir = os.path.join(repo_root, "data", "per_asset_parquet")
-    scalers_dir = os.path.join(repo_root, "data", "scalers")
-
-    # Step 1: split CSV -> parquet (chunked)
     print("STEP 1: splitting CSV -> per-asset parquet")
-    split_csv_to_parquet(csv_path=raw_csv, out_dir=parquet_dir, chunksize=200_000, force=False)
-
-    # Step 2: fit scalers using train cutoff (optional: pass a pd.Timestamp)
-    print("STEP 2: fitting scalers")
-    fit_and_save_scalers(parquet_dir=parquet_dir, scalers_dir=scalers_dir)
-
-    # Step 3: test streaming dataset
-    print("STEP 3: testing streaming IterableDataset")
-    ds = ElectricityPriceIterableDataset(
-        parquet_dir=parquet_dir,
-        input_chunk_length=96,
-        output_chunk_length=10,
-        target_cols=["high", "low", "close", "volume"],
-        timestamp_col="ExecutionTime",
-        scalers_dir=scalers_dir,
-        shuffle_buffer=128,
-        stride=1,
-    )
-
-    # DataLoader (multi-worker safe)
-    loader = torch.utils.data.DataLoader(ds, batch_size=16, num_workers=4, collate_fn=collate_fn)
-
-    for i, (past, future, mask, assets, ts) in enumerate(loader):
-        print(f"[batch {i}] past {past.shape} future {future.shape} mask {mask.shape} asset {assets[0]}")
-        if i >= 2:
-            break
-
+    split_csv_to_parquet(csv_path=raw_csv, out_dir=parquet_dir, chunksize=200_000, force=True)
     print("done.")
