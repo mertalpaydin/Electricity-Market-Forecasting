@@ -3,6 +3,8 @@
 This document outlines a comprehensive, step-by-step plan for the electricity-market forecasting assignment.
 It incorporates strategies for data handling, advanced modeling, GPU acceleration, and systematic improvement to ensure a rigorous and high-performing solution.
 
+>**Workflow Note:** The core, reusable logic (like data loaders and preprocessing functions) resides in the `src/` directory. However, the main workflow execution, from data exploration to model training and evaluation, is orchestrated through Jupyter Notebooks in the `notebooks/` directory. This allows for interactive development and clear reporting.
+
 ----------
 
 ### Phase 0: Project Setup & Environment
@@ -86,7 +88,7 @@ To efficiently handle large multivariate datasets without exceeding RAM limits, 
 
 The objective is to understand the data's unique structure and engineer features that will guide the models.
 
-**Action 1: Initial Data Loading and EDA.** 		
+**Action 1: Initial Data Loading and EDA (in `notebooks/01_EDA.ipynb`).** 		
 
 	- Load the data and visualize a few sample contracts to understand the lifecycle of trading periods interspersed with zeros. Check for `NaNs` and analyze the basic statistics.
 	- Visualize H/L/C/V and `Volume>0` coverage per asset. Compute liquidity (fraction of non-zero records).
@@ -96,7 +98,7 @@ The objective is to understand the data's unique structure and engineer features
 
 This script will contain functions to transform the data.
 
-- Create standard pipeline functions: `load()`, `clean()`, `feature_engineer()`, `split()`, `scale()`. 
+- Create standard pipeline functions: `load()`, `clean()`, `feature_engineer()`, `split()`, `scale()`.
 - **Targets**: treat `High, Low, Close, Volume` as **multivariate targets** for every asset. Save data layout spec (asset × timestamp × 4).
     
    1.  **Feature Engineering:** Add columns for:
@@ -105,18 +107,18 @@ This script will contain functions to transform the data.
             
         -   Time-based Features: -   `hour_of_day`, `minute_of_day`, `day_of_week`, `week_of_year`, `month`, `is_weekend`,   `time_to_delivery`. For a contract like Tue11Q4 (delivering Tuesday from 11:45 to 12:00), at any given timestamp (e.g., Monday at 09:00), time_to_delivery would be the duration between these two points. `daylight_indicator` (simple proxy: hour between sunrise/sunset — approximate by month+hour.
 
-	- Cross-contract & relational features: For each asset at time t, include last known `Close` / `Volume` of adjacent delivery contracts (e.g., ±3 contract window) as exogenous features. Rolling stats for each target (computed only across non-zero windows): 4-step MA, 8-step MA, 12-step std, etc.
+	- Rolling Window: Rolling stats for each target (computed only across non-zero windows): 4-step MA, 8-step MA, 12-step std, etc.
             
-    2.  **Data Splitting:** Implement a strict chronological split: **Train** (`2021-2022`), **Validation** (`2023`), **Test** (`2024`).
-        
-    3.  **Scaling:** Fit a `StandardScaler` for each asset **only on its non-zero training data**. 
+        2.  **Data Splitting:** Implement a strict chronological split: **Train** (`2021-2022`), **Validation** (`2023`), **Test** (`2024`).
+            
+        3.  **Scaling:** Fit a `StandardScaler` for each asset **only on its non-zero training data**. 
 
 **Note:** Save these scalers to be applied to the validation and test sets. Save processed artifacts: feature lists, and split indices.
         
 
 ----------
 
-### Phase 2: Baseline Modeling
+### Phase 2: Baseline Modeling (in `notebooks/02_Baseline_Models.ipynb`)
 
 Establish strong baselines to prove the value of more complex models.
 
@@ -158,7 +160,7 @@ Establish strong baselines to prove the value of more complex models.
 
 ----------
 
-###  Phase 3: Advanced Deep Learning Modeling — Pretrained PatchTSMixer (Fine-tuning)
+###  Phase 3: Advanced Deep Learning Modeling (in `notebooks/03_PatchTSMixer_Training.ipynb`)
 
 Leverage a foundation-level, patch-based time-series model using the `transformers.PatchTSMixerForPrediction` class.
 
@@ -308,7 +310,7 @@ Ensure your models are performing optimally by tuning their key parameters. Use 
 	-   Try `input_chunk_length`: 24, 96, 288 (short → medium → long history).
 	    
 	-   Log GPU/time tradeoffs; pick best validation sMAPE vs compute.
-        
+            
 -   **Scenario 3: Create a Model Ensemble.** Combine the strengths of fundamentally different models. The best candidates are:
     
 	-   Stack LightGBM + PatchTST + LSTM predictions.
@@ -316,7 +318,7 @@ Ensure your models are performing optimally by tuning their key parameters. Use 
 	-   Meta-models: simple Ridge / Linear Regression, or small NN trained on validation fold.
 	    
 	-   Ensemble at per-target level (one meta model per H/L/C/V may work best).
-        
+            
 -   **Scenario 4: Stabilize with Multiple Seeds.** 
     
 	-   Train best architectures with 3–5 different seeds; average predictions.
@@ -325,7 +327,7 @@ Ensure your models are performing optimally by tuning their key parameters. Use 
 
 ----------
 
-###  Phase 6: Final Evaluation & Reporting 
+###  Phase 6: Final Evaluation & Reporting (in `notebooks/04_Evaluation.ipynb`)
 
 Execute the final run of all models on the test set and present your findings clearly.
 
@@ -375,4 +377,4 @@ Execute the final run of all models on the test set and present your findings cl
     
     -   problem summary, modeling choices, final results table, key diagnostics, caveats.
         
--   Include a short appendix with commands to reproduce the final run (one-liner scripts or `run.sh`).
+    -   Include a short appendix with commands to reproduce the final run (one-liner scripts or `run.sh`).

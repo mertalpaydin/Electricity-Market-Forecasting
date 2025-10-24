@@ -22,5 +22,10 @@
     - `feature_engineer` function created to add time-based features (`hour_of_day`, `day_of_week`, etc.) and an `is_trading` flag.
     - `split_data_by_year` function created to split the data into `train` (2021-2022) and `val` (2023) sets.
     - `fit_and_save_scalers` function created to fit `StandardScaler` for each asset on non-zero training data and save them to `data/scalers`.
+- **Initial Data Loading and EDA (in `notebooks/01_EDA.ipynb`):**
+    - Loaded sample data and visualized contract lifecycles (Price and Volume).
+    - Analyzed basic statistics and confirmed no NaN values are present.
+    - Visualized trading liquidity across sample assets.
+    - Generated within-asset and cross-asset correlation heatmaps.
 - **Documentation:**
     - Added comprehensive docstrings and comments to all functions and classes in `src/data_loader.py`, `src/datamodule.py`, and `src/preprocess.py`.

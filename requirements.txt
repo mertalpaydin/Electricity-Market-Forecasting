@@ -13,3 +13,4 @@ torchvision
 torchaudio
 darts[pytorch]
 pyarrow
+seaborn

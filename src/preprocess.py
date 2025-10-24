@@ -3,7 +3,6 @@ import glob
 import pandas as pd
 from tqdm import tqdm
 import logging
-import shutil
 from sklearn.preprocessing import StandardScaler
 import joblib
 
@@ -39,6 +38,24 @@ def feature_engineer(df: pd.DataFrame, timestamp_col: str = "ExecutionTime") -> 
 
     numeric_cols = ['high', 'low', 'close', 'volume']
     df['is_trading'] = (df[numeric_cols].sum(axis=1) > 0).astype(int)
+
+    # --- Rolling Window Features (calculated only on trading data) ---
+    # Create a temporary DataFrame with NaNs where there is no trading
+    trading_only_df = df[numeric_cols].where(df['is_trading'] == 1)
+
+    windows = [2, 4, 6, 8]
+    for col in numeric_cols:
+        for w in windows:
+            # Moving Average
+            df[f'{col}_ma_{w}'] = trading_only_df[col].rolling(window=w, min_periods=1).mean()
+
+        # Standard Deviation
+        df[f'{col}_std_12'] = trading_only_df[col].rolling(window=12, min_periods=1).std()
+
+    # Forward-fill the NaNs created by the rolling operations and where is_trading was 0
+    roll_cols = [f'{c}_ma_{w}' for c in numeric_cols for w in windows] + \
+                [f'{c}_std_12' for c in numeric_cols]
+    df[roll_cols] = df[roll_cols].ffill().fillna(0)
 
     return df
 
@@ -159,17 +176,20 @@ if __name__ == "__main__":
     val_output_dir = os.path.join(base_dir, "data", "val")
     scalers_output_dir = os.path.join(base_dir, "data", "scalers")
 
-    # Clean up directories from previous runs to ensure a fresh start.
+    # Clean up directories from previous runs by deleting their contents.
     for dir_path in [train_output_dir, val_output_dir, scalers_output_dir]:
-        try:
-            if os.path.exists(dir_path):
-                logging.info(f"Removing existing directory: {dir_path}")
-                shutil.rmtree(dir_path)
-        except PermissionError:
-            logging.warning(
-                f"Could not remove directory {dir_path}. "
-                f"This may be due to a file lock. Attempting to proceed, but results may be inconsistent."
-            )
+        if os.path.exists(dir_path):
+            logging.info(f"Cleaning contents of directory: {dir_path}")
+            files_to_delete = glob.glob(os.path.join(dir_path, '*.*'))
+            if not files_to_delete:
+                continue  # Directory is empty
+
+            logging.info(f"  Found {len(files_to_delete)} files to delete.")
+            for f in files_to_delete:
+                try:
+                    os.remove(f)
+                except (OSError, PermissionError) as e:
+                    logging.warning(f"  Could not delete file {f}: {e}. Skipping.")
 
     # Step 1: Split data by year and apply feature engineering.
     logging.info("--- Starting Data Splitting and Feature Engineering ---")
