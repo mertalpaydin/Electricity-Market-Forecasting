@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader
 import pytorch_lightning as pl
 from sklearn.preprocessing import StandardScaler
 # Import dataset implementation from src.data_loader
-from src.data_loader import ElectricityPriceIterableDataset, collate_fn
+from data_loader import ElectricityPriceIterableDataset, collate_fn
 
 
 # --- Utility metric and inverse transform helpers --- #
@@ -300,7 +300,7 @@ if __name__ == "__main__":
         test_parquet=test_parquet,
         scalers_dir=scalers_dir,
         batch_size=16,
-        num_workers=4,
+        num_workers=0, # Set to 0 for main thread execution in this test
         dataset_kwargs=dataset_kwargs,
     )
 
@@ -313,17 +313,18 @@ if __name__ == "__main__":
     print("Fetching one train batch...")
     train_loader = dm.train_dataloader()
     train_batch = next(iter(train_loader))
-    past, future, mask, assets, ts = train_batch
-    print(f"  Train batch OK: past.shape={past.shape}, asset={assets[0]}")
+    past, past_mask, future, future_mask, assets, ts = train_batch
+    print(f"  Train batch OK: past.shape={past.shape}, past_mask.shape={past_mask.shape}, asset={assets[0]}")
 
     print("Fetching one val batch...")
     val_loader = dm.val_dataloader()
     val_batch = next(iter(val_loader))
-    past_v, future_v, mask_v, assets_v, ts_v = val_batch
-    print(f"  Val batch OK: past.shape={past_v.shape}, asset={assets_v[0]}")
+    past_v, past_mask_v, future_v, future_mask_v, assets_v, ts_v = val_batch
+    print(f"  Val batch OK: past.shape={past_v.shape}, past_mask.shape={past_mask_v.shape}, asset={assets_v[0]}")
 
     print("Testing validation metric helper...")
-    smape = dm.compute_validation_metrics(past_v, future_v, mask_v, assets_v)
+    # Use future_v for both prediction and target to test the metric function with correct shapes
+    smape = dm.compute_validation_metrics(future_v, future_v, future_mask_v, assets_v)
     print(f"  Example sMAPE: {smape:.4f}")
 
     print("\n--- DataModule test complete ---")

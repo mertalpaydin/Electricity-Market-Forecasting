@@ -25,25 +25,6 @@ def split_csv_to_parquet(
 ):
     """
     Converts a large CSV file into a directory of smaller, per-asset Parquet files.
-
-    This function uses a memory-efficient, two-pass approach:
-    1.  **Pass 1:** It streams the input CSV in chunks, appending each row to a
-        temporary CSV file specific to the asset ID. This avoids loading the entire
-        dataset into memory.
-    2.  **Pass 2:** It then reads each temporary CSV, sorts the data by timestamp
-        in memory (as per-asset data should be manageable), and writes the sorted
-        data to a compressed Parquet file.
-
-    Finally, it creates an `assets.json` file listing all generated asset file names.
-
-    Args:
-        csv_path (str): Path to the large input CSV file.
-        out_dir (str): Directory to save the output Parquet files.
-        id_col (str): The column name in the CSV that identifies the asset.
-        timestamp_col (str): The column name for the timestamp.
-        target_cols (List[str]): A list of column names to be included in the output.
-        chunksize (int): The number of rows to read from the CSV at a time.
-        force (bool): If True, existing Parquet files will be overwritten.
     """
     os.makedirs(out_dir, exist_ok=True)
     assets_seen = set()
@@ -60,7 +41,6 @@ def split_csv_to_parquet(
     chunk_iterator = pd.read_csv(
         csv_path,
         parse_dates=[timestamp_col],
-        infer_datetime_format=True,
         chunksize=chunksize
     )
 
@@ -127,21 +107,12 @@ class ElectricityPriceIterableDataset(IterableDataset):
     A streaming dataset that reads and yields time series windows from pre-processed
     Parquet files.
 
-    This dataset is designed to work with PyTorch's DataLoader for efficient,
-    multi-worker data loading. It reads data for one asset at a time, generates
-    all possible sliding windows, and then moves to the next asset. This approach
-    keeps memory usage low, as only one asset's data is loaded at a time.
-
-    The dataset expects that the Parquet files have already been processed by
-    `preprocess.py` and include an 'is_trading' column. It also applies on-the-fly
-    scaling using pre-fitted scalers.
-
     Yields:
         A tuple containing:
-        - past (torch.Tensor): The input window of shape (input_chunk_length, num_features).
-        - future (torch.Tensor): The target window of shape (output_chunk_length, num_features).
-        - mask (torch.Tensor): A binary mask for the future window, indicating
-          trading periods. Shape: (output_chunk_length, num_features).
+        - past (torch.Tensor): The input window. Shape: (input_chunk_length, num_features).
+        - past_mask (torch.Tensor): The mask for the input window. Shape: (input_chunk_length, num_features).
+        - future (torch.Tensor): The target window. Shape: (output_chunk_length, num_features).
+        - future_mask (torch.Tensor): The mask for the target window. Shape: (output_chunk_length, num_features).
         - asset_id (str): The ID of the asset.
         - past_ts (np.ndarray): The timestamps for the input window.
     """
@@ -158,24 +129,6 @@ class ElectricityPriceIterableDataset(IterableDataset):
             stride: int = 1,
             min_length: Optional[int] = None,
     ):
-        """
-        Initializes the dataset.
-
-        Args:
-            parquet_dir (str): Directory containing the processed Parquet files.
-            scalers_dir (str): Directory containing the pre-fitted scalers.
-            assets_list (Optional[List[str]]): A specific list of assets to use.
-                If None, all assets in `parquet_dir` are used.
-            input_chunk_length (int): The length of the input window.
-            output_chunk_length (int): The length of the prediction window.
-            target_cols (List[str]): The names of the target columns to be used.
-            timestamp_col (str): The name of the timestamp column.
-            shuffle_buffer (int): If > 0, a buffer of this size is filled and
-                samples are drawn randomly from it, providing local shuffling.
-            stride (int): The step size for creating sliding windows.
-            min_length (Optional[int]): The minimum number of rows an asset's
-                DataFrame must have to be included.
-        """
         super().__init__()
         self.parquet_dir = parquet_dir
         self.scalers_dir = scalers_dir
@@ -200,18 +153,9 @@ class ElectricityPriceIterableDataset(IterableDataset):
         self._epoch = 0
 
     def set_epoch(self, epoch: int):
-        """
-        Sets the current epoch number. This is used to ensure that shuffling is
-        deterministic and reproducible across epochs, especially in a multi-worker setup.
-        """
         self._epoch = int(epoch)
 
     def _get_worker_cache(self):
-        """
-        Creates or retrieves a cache specific to the current DataLoader worker.
-        This is used to store scalers in memory and avoid re-reading them from disk
-        for every asset.
-        """
         worker_info = get_worker_info()
         worker_id = worker_info.id if worker_info is not None else 0
         cache_attr = f"_worker_cache_{worker_id}"
@@ -220,9 +164,6 @@ class ElectricityPriceIterableDataset(IterableDataset):
         return getattr(self, cache_attr)
 
     def _load_scaler_for_asset(self, asset: str):
-        """
-        Loads the scaler for a given asset, using a worker-specific cache.
-        """
         cache = self._get_worker_cache()
         scaler_map = cache["scalers"]
         if asset in scaler_map:
@@ -242,23 +183,16 @@ class ElectricityPriceIterableDataset(IterableDataset):
             return None
 
     def _iter_for_assets(self, assets_subset: List[str]):
-        """
-        The core generator function that iterates through a subset of assets
-        and yields sliding windows.
-        """
         worker_info = get_worker_info()
         worker_id = worker_info.id if worker_info is not None else 0
         seed = 1234 + self._epoch * 100 + worker_id
         rnd = random.Random(seed)
         buffer: List[Tuple[Any, ...]] = []
 
-        # Iterate through each asset assigned to this worker.
         for asset in assets_subset:
             path = self.asset_paths.get(asset)
             if not path or not os.path.exists(path):
                 continue
-            
-            # Load the entire Parquet file for one asset into memory.
             try:
                 df = pd.read_parquet(path)
             except Exception:
@@ -277,33 +211,31 @@ class ElectricityPriceIterableDataset(IterableDataset):
             L_in = self.input_chunk_length
             L_out = self.output_chunk_length
 
-            # Create all possible sliding windows for this asset.
             for start in range(0, n - L_in - L_out + 1, self.stride):
-                # 1. Extract past and future windows.
                 x = arr[start : start + L_in]
                 y = arr[start + L_in : start + L_in + L_out]
                 past_ts = timestamps[start : start + L_in]
+                
+                past_trading = trading_mask[start : start + L_in]
                 future_trading = trading_mask[start + L_in : start + L_in + L_out]
                 
-                # 2. Apply the pre-fitted scaler if it exists.
                 if scaler is not None:
                     try:
                         x = scaler.transform(x)
                         y = scaler.transform(y)
                     except Exception:
-                        # If scaling fails, use the original data.
                         pass
                 
-                # 3. Create the future mask for metric calculation.
-                mask = np.repeat(future_trading.reshape(-1, 1), repeats=len(self.target_cols), axis=1).astype(np.float32)
+                past_mask = np.repeat(past_trading.reshape(-1, 1), repeats=len(self.target_cols), axis=1).astype(np.float32)
+                future_mask = np.repeat(future_trading.reshape(-1, 1), repeats=len(self.target_cols), axis=1).astype(np.float32)
                 
                 sample = (torch.from_numpy(x).float(),
+                          torch.from_numpy(past_mask).float(),
                           torch.from_numpy(y).float(),
-                          torch.from_numpy(mask).float(),
+                          torch.from_numpy(future_mask).float(),
                           asset,
                           past_ts)
                 
-                # 4. Use a shuffle buffer to provide local, memory-efficient shuffling.
                 if self.shuffle_buffer > 0:
                     buffer.append(sample)
                     if len(buffer) >= self.shuffle_buffer:
@@ -312,57 +244,42 @@ class ElectricityPriceIterableDataset(IterableDataset):
                 else:
                     yield sample
         
-        # Yield any remaining items in the shuffle buffer.
         while self.shuffle_buffer > 0 and len(buffer) > 0:
             idx = rnd.randrange(len(buffer))
             yield buffer.pop(idx)
 
     def __iter__(self):
-        """
-        The main iterator method for the dataset. It handles the distribution of
-        assets among workers.
-        """
         assets_to_process = list(self.assets)
-        
-        # Shuffle the assets at the beginning of each epoch for randomness.
         rnd = random.Random(1234 + self._epoch)
         rnd.shuffle(assets_to_process)
-        
         worker_info = get_worker_info()
         if worker_info is None:
-            # If not in a worker process, process all assets.
             assets_subset = assets_to_process
         else:
-            # In a worker process, divide the shuffled assets among workers.
             num_workers = worker_info.num_workers
             worker_id = worker_info.id
             assets_subset = [a for i, a in enumerate(assets_to_process) if i % num_workers == worker_id]
-            
         yield from self._iter_for_assets(assets_subset)
 
 def collate_fn(batch):
     """
     A custom collate function for the DataLoader.
 
-    It takes a list of samples (each being a tuple from the dataset) and stacks
-    them into batches.
-
-    Args:
-        batch (list): A list of samples from the ElectricityPriceIterableDataset.
-
     Returns:
         A tuple of batched tensors and lists:
-        - past (torch.Tensor): Batched input windows.
-        - future (torch.Tensor): Batched target windows.
-        - mask (torch.Tensor): Batched mask tensors.
-        - asset_ids (list): A list of asset IDs in the batch.
-        - past_ts_list (list): A list of timestamp arrays for the input windows.
+        - past (torch.Tensor)
+        - past_mask (torch.Tensor)
+        - future (torch.Tensor)
+        - future_mask (torch.Tensor)
+        - asset_ids (list)
+        - past_ts_list (list)
     """
-    past_list, future_list, mask_list, asset_list, ts_list = zip(*batch)
+    past_list, past_mask_list, future_list, future_mask_list, asset_list, ts_list = zip(*batch)
     past = torch.stack(past_list, dim=0)
+    past_mask = torch.stack(past_mask_list, dim=0)
     future = torch.stack(future_list, dim=0)
-    mask = torch.stack(mask_list, dim=0)
-    return past, future, mask, list(asset_list), list(ts_list)
+    future_mask = torch.stack(future_mask_list, dim=0)
+    return past, past_mask, future, future_mask, list(asset_list), list(ts_list)
 
 if __name__ == "__main__":
     # This block demonstrates the primary purpose of this script: converting the
