@@ -56,6 +56,7 @@ def split_csv_to_parquet(
     total_chunks = math.ceil(total_rows / chunksize)
     print(f"[split] Found {total_rows} rows in {total_chunks} chunks.")
 
+    # --- PASS 1: Stream the large CSV and split into temporary per-asset CSVs. ---
     chunk_iterator = pd.read_csv(
         csv_path,
         parse_dates=[timestamp_col],
@@ -73,6 +74,8 @@ def split_csv_to_parquet(
             g[store_cols].to_csv(temp_path, mode="a", header=header, index=False)
 
     print("[split] PASS 1 complete.")
+    
+    # --- PASS 2: Convert each temporary CSV to a sorted, compressed Parquet file. ---
     print(f"[split] PASS 2: converting {len(assets_seen)} temp CSVs to sorted parquet...")
     assets = sorted(list(assets_seen))
 
@@ -89,6 +92,8 @@ def split_csv_to_parquet(
         tmp_csv = os.path.join(temp_dir, f"{asset}.csv")
         if not os.path.exists(tmp_csv):
             continue
+        
+        # Use pyarrow for fast CSV reading, with a pandas fallback for robustness.
         try:
             table = pa.csv.read_csv(tmp_csv, read_options=read_options, convert_options=convert_options)
         except Exception as e:
@@ -97,13 +102,19 @@ def split_csv_to_parquet(
             df[timestamp_col] = pd.to_datetime(df[timestamp_col], utc=True)
             df = df[[timestamp_col] + target_cols]
             table = pa.Table.from_pandas(df)
+        
+        # Sort by timestamp before saving to ensure data is chronological.
         sorted_table = table.sort_by([(timestamp_col, 'ascending')])
         pq.write_table(sorted_table, out_path, compression='snappy')
         os.remove(tmp_csv)
+    
+    # Clean up the temporary directory.
     try:
         os.rmdir(temp_dir)
     except OSError:
         pass
+        
+    # Save the list of processed assets for later use.
     final_assets = [os.path.splitext(os.path.basename(p))[0] for p in glob.glob(os.path.join(out_dir, "*.parquet"))]
     assets_json = os.path.join(out_dir, "assets.json")
     with open(assets_json, "w") as f:
@@ -241,42 +252,58 @@ class ElectricityPriceIterableDataset(IterableDataset):
         rnd = random.Random(seed)
         buffer: List[Tuple[Any, ...]] = []
 
+        # Iterate through each asset assigned to this worker.
         for asset in assets_subset:
             path = self.asset_paths.get(asset)
             if not path or not os.path.exists(path):
                 continue
+            
+            # Load the entire Parquet file for one asset into memory.
             try:
                 df = pd.read_parquet(path)
             except Exception:
                 continue
             if self.timestamp_col not in df.columns:
                 continue
+                
             arr = df[self.target_cols].values.astype(np.float32)
             timestamps = df[self.timestamp_col].values
             n = arr.shape[0]
             if n < self.min_length:
                 continue
+            
             trading_mask = df["is_trading"].values.astype(np.float32)
             scaler = self._load_scaler_for_asset(asset)
             L_in = self.input_chunk_length
             L_out = self.output_chunk_length
+
+            # Create all possible sliding windows for this asset.
             for start in range(0, n - L_in - L_out + 1, self.stride):
+                # 1. Extract past and future windows.
                 x = arr[start : start + L_in]
                 y = arr[start + L_in : start + L_in + L_out]
                 past_ts = timestamps[start : start + L_in]
                 future_trading = trading_mask[start + L_in : start + L_in + L_out]
+                
+                # 2. Apply the pre-fitted scaler if it exists.
                 if scaler is not None:
                     try:
                         x = scaler.transform(x)
                         y = scaler.transform(y)
                     except Exception:
+                        # If scaling fails, use the original data.
                         pass
+                
+                # 3. Create the future mask for metric calculation.
                 mask = np.repeat(future_trading.reshape(-1, 1), repeats=len(self.target_cols), axis=1).astype(np.float32)
+                
                 sample = (torch.from_numpy(x).float(),
                           torch.from_numpy(y).float(),
                           torch.from_numpy(mask).float(),
                           asset,
                           past_ts)
+                
+                # 4. Use a shuffle buffer to provide local, memory-efficient shuffling.
                 if self.shuffle_buffer > 0:
                     buffer.append(sample)
                     if len(buffer) >= self.shuffle_buffer:
@@ -284,6 +311,8 @@ class ElectricityPriceIterableDataset(IterableDataset):
                         yield buffer.pop(idx)
                 else:
                     yield sample
+        
+        # Yield any remaining items in the shuffle buffer.
         while self.shuffle_buffer > 0 and len(buffer) > 0:
             idx = rnd.randrange(len(buffer))
             yield buffer.pop(idx)
@@ -294,15 +323,21 @@ class ElectricityPriceIterableDataset(IterableDataset):
         assets among workers.
         """
         assets_to_process = list(self.assets)
+        
+        # Shuffle the assets at the beginning of each epoch for randomness.
         rnd = random.Random(1234 + self._epoch)
         rnd.shuffle(assets_to_process)
+        
         worker_info = get_worker_info()
         if worker_info is None:
+            # If not in a worker process, process all assets.
             assets_subset = assets_to_process
         else:
+            # In a worker process, divide the shuffled assets among workers.
             num_workers = worker_info.num_workers
             worker_id = worker_info.id
             assets_subset = [a for i, a in enumerate(assets_to_process) if i % num_workers == worker_id]
+            
         yield from self._iter_for_assets(assets_subset)
 
 def collate_fn(batch):

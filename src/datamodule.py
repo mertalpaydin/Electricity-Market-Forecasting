@@ -34,6 +34,7 @@ def masked_smoothed_smape(y_true: torch.Tensor, y_pred: torch.Tensor, mask: torc
             masked elements.
     """
     num = torch.abs(y_true - y_pred)
+    # Add epsilon for numerical stability, preventing division by zero.
     den = torch.abs(y_true) + torch.abs(y_pred) + eps
     smape = 2.0 * num / den
     masked = smape * mask
@@ -74,6 +75,7 @@ def inverse_transform_batch(preds: np.ndarray, asset_ids: List[str], scalers_dir
                 inv = scaler.inverse_transform(reshaped)
                 out[i] = inv.reshape(T, C)
             except Exception as e:
+                # For robustness, if a scaler is missing or corrupt, use the scaled values.
                 out[i] = preds[i]
         else:
             out[i] = preds[i]
@@ -185,6 +187,7 @@ class ElectricityDataModule(pl.LightningDataModule):
 
     def val_dataloader(self) -> DataLoader:
         """Returns the DataLoader for the validation set."""
+        # Use fewer workers for validation as it's less I/O intensive than training.
         return DataLoader(
             self.val_dataset,
             batch_size=self.batch_size,
@@ -197,6 +200,7 @@ class ElectricityDataModule(pl.LightningDataModule):
         """Returns the DataLoader for the test set."""
         if self.test_dataset is None:
             return None
+        # Use fewer workers for testing as it's less I/O intensive than training.
         return DataLoader(
             self.test_dataset,
             batch_size=self.batch_size,
@@ -254,13 +258,16 @@ class ElectricityDataModule(pl.LightningDataModule):
         Returns:
             float: The computed sMAPE score.
         """
+        # Step 1: Move data to CPU and convert to NumPy for scaling.
         preds_np = preds_tensor.detach().cpu().numpy()
         targets_np = targets_tensor.detach().cpu().numpy()
         mask_np = mask_tensor.detach().cpu().numpy()
 
+        # Step 2: Inverse-transform predictions and targets to their original scale.
         preds_inv = self._inverse_transform_batch_cached(preds_np, asset_ids)
         targets_inv = self._inverse_transform_batch_cached(targets_np, asset_ids)
 
+        # Step 3: Convert back to tensors and compute sMAPE on original-scale data.
         preds_inv_t = torch.from_numpy(preds_inv).to(mask_tensor.device)
         targets_inv_t = torch.from_numpy(targets_inv).to(mask_tensor.device)
         mask_t = torch.from_numpy(mask_np).to(mask_tensor.device)

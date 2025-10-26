@@ -73,7 +73,7 @@ To efficiently handle large multivariate datasets without exceeding RAM limits, 
 
 -   When using Darts models, ensure data is provided via a Lightning-compatible DataLoader rather than preloaded `TimeSeries` objects.
     
--   For baselines (LSTM, PatchTST), data will stream batch-by-batch from disk to GPU, allowing out-of-core training on 8GB VRAM.
+-   For data heavy models (LSTM, PatchTSMixer etc.), data will stream batch-by-batch from disk to GPU, allowing out-of-core training on 8GB VRAM.
     
 
 #### **Action 3: Subsampling and Full-Training Protocol**
@@ -107,11 +107,11 @@ This script will contain functions to transform the data.
             
         -   Time-based Features: -   `hour_of_day`, `minute_of_day`, `day_of_week`, `week_of_year`, `month`, `is_weekend`,   `time_to_delivery`. For a contract like Tue11Q4 (delivering Tuesday from 11:45 to 12:00), at any given timestamp (e.g., Monday at 09:00), time_to_delivery would be the duration between these two points. `daylight_indicator` (simple proxy: hour between sunrise/sunset — approximate by month+hour.
 
-	- Rolling Window: Rolling stats for each target (computed only across non-zero windows): 4-step MA, 8-step MA, 12-step std, etc.
+        -   Cross contract features - add H, L, C, V from previous and next contracts
             
-        2.  **Data Splitting:** Implement a strict chronological split: **Train** (`2021-2022`), **Validation** (`2023`), **Test** (`2024`).
+       2.  **Data Splitting:** Implement a strict chronological split: **Train** (`2021-2022`), **Validation** (`2023`), **Test** (`2024`).
             
-        3.  **Scaling:** Fit a `StandardScaler` for each asset **only on its non-zero training data**. 
+       3.  **Scaling:** Fit a `StandardScaler` for each asset **only on its non-zero training data**. 
 
 **Note:** Save these scalers to be applied to the validation and test sets. Save processed artifacts: feature lists, and split indices.
         
@@ -121,6 +121,7 @@ This script will contain functions to transform the data.
 ### Phase 2: Baseline Modeling (in `notebooks/02_Baseline_Models.ipynb`)
 
 Establish strong baselines to prove the value of more complex models.
+Implementation of baseline models should allow hyperparameter tuning (Phase 4) before training.
 
 -   **Naive Forecasts**
     
@@ -163,6 +164,7 @@ Establish strong baselines to prove the value of more complex models.
 ###  Phase 3: Advanced Deep Learning Modeling (in `notebooks/03_PatchTSMixer_Training.ipynb`)
 
 Leverage a foundation-level, patch-based time-series model using the `transformers.PatchTSMixerForPrediction` class.
+Implementation of this model should allow hyperparameter tuning (Phase 4) before training.
 
 #### **Model overview**
 
@@ -176,13 +178,15 @@ Leverage a foundation-level, patch-based time-series model using the `transforme
 
 #### **Recommended configuration (starting point)**
 
-`from transformers import PatchTSMixerConfig
+`
+from transformers import PatchTSMixerConfig
 config = PatchTSMixerConfig(
     context_length = 96, # 24 h lookback (15-min cadence) patch_length   = 8, # 2 h per patch patch_stride   = 8, # non-overlapping patches num_input_channels = 4, # H,L,C,V prediction_length = 10,
     d_model = 32,
     num_layers = 4,
     dropout = 0.15,
-    mode = "common_channel", # or "mix_channel" if cross-correlation matters )` 
+    mode = "common_channel", # or "mix_channel" if cross-correlation matters )
+` 
 
 **If VRAM issues arise (8 GB GPU):**
 
@@ -288,7 +292,7 @@ Ensure your models are performing optimally by tuning their key parameters. Use 
 	-   PatchTSMixer: `d_model`, `num_layers`, `dropout`, `mode`, `learning_rate`, `batch_size`, `patch_length`.    
 	-   LSTM: `hidden_size`, `n_layers`, `dropout`.    
 	-   LightGBM: `num_leaves`, `max_depth`, `learning_rate`, `n_estimators`, `reg_alpha`, `reg_lambda`.
-- Training Loss: For neural networks (LSTM, PatchTST), use a smooth, gradient-friendly loss function like Mean Absolute Error (MAE / L1Loss) for more stable training.
+- Training Loss: For neural networks (LSTM, PatchTSMixer), use a smooth, gradient-friendly loss function like Mean Absolute Error (MAE / L1Loss) for more stable training.
 - Run Optuna on the representative subsample(s). Select best hyperparams per-architecture (LSTM / PatchTST / LightGBM). Validate transferability: 
 	- Retrain the chosen hyperparams on a different subsample to check for consistent validation sMAPE. If performance varies widely, consider architecture-specific hyperparams per-liquidity bucket.
 - Optimization target: minimize **validation masked sMAPE** (only for time steps where true value ≠ 0).
@@ -301,7 +305,7 @@ Ensure your models are performing optimally by tuning their key parameters. Use 
 
 -   **Scenario 1: Enhanced Feature Engineering.**
     
-	-   Add additional rolling windows, cross-contract lags, and interaction features (e.g., `close - lag_close_of_adjacent_contract`).
+	-   Add interaction features (e.g., `close - lag_close_of_adjacent_contract`).
 	    
 	-   Test `is_trading` as input and/or mask out predictions where `is_trading` is false for sMAPE calculation.
         
@@ -358,8 +362,6 @@ Execute the final run of all models on the test set and present your findings cl
 - **Ablations & Diagnostics**
     
     -   Liquidity sensitivity: performance on high-liquidity vs low-liquidity assets.
-        
-    -   Cross-contract feature ablation: model with vs without cross-contract inputs.
         
     -   Error time-of-day and weekday analysis.
 
