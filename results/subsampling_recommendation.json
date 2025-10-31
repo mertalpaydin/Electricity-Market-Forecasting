@@ -1,0 +1,40 @@
+{
+  "best_strategy": "Stratified",
+  "val_loss": 8.997873306274414,
+  "training_time_minutes": 0.5611628532409668,
+  "epochs_trained": 13,
+  "all_results": [
+    {
+      "strategy": "Trading-Only",
+      "training_time_minutes": 0.3851556340853373,
+      "epochs_trained": 21,
+      "val_loss": 17.396249771118164,
+      "converged": false,
+      "success": true
+    },
+    {
+      "strategy": "Stratified",
+      "training_time_minutes": 0.5611628532409668,
+      "epochs_trained": 13,
+      "val_loss": 8.997873306274414,
+      "converged": true,
+      "success": true
+    },
+    {
+      "strategy": "Boundary-Aware",
+      "training_time_minutes": 0.3995328108469645,
+      "epochs_trained": 21,
+      "val_loss": 18.764341354370117,
+      "converged": false,
+      "success": true
+    },
+    {
+      "strategy": "Hybrid",
+      "training_time_minutes": 0.547116748491923,
+      "epochs_trained": 17,
+      "val_loss": 11.028310775756836,
+      "converged": true,
+      "success": true
+    }
+  ]
+}
