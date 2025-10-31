@@ -13,6 +13,7 @@ data/TRAIN_Reco_2021_2022_2023.csv
 # IDEA
 .venv
 .idea
+.claude
 
 # Distribution / packaging
 .Python

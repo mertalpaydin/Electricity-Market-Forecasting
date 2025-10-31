@@ -1,0 +1,16 @@
+{
+  "best_value": 8.530094146728516,
+  "best_params": {
+    "hidden_dim": 64,
+    "n_rnn_layers": 2,
+    "dropout": 0.1,
+    "lr": 0.001,
+    "batch_size": 128
+  },
+  "best_trial": 5,
+  "n_trials": 10,
+  "n_completed": 8,
+  "n_pruned": 2,
+  "n_failed": 0,
+  "total_time_seconds": 7725.787122964859
+}

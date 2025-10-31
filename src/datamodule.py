@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader
 import pytorch_lightning as pl
 from sklearn.preprocessing import StandardScaler
 # Import dataset implementation from src.data_loader
-from data_loader import ElectricityPriceIterableDataset, collate_fn
+from .data_loader import ElectricityPriceIterableDataset, collate_fn
 
 
 # --- Utility metric and inverse transform helpers --- #
@@ -108,8 +108,8 @@ class ElectricityDataModule(pl.LightningDataModule):
             self,
             train_parquet: str,
             val_parquet: str,
-            test_parquet: Optional[str],
-            scalers_dir: Optional[str],
+            test_parquet: Optional[str] = None,
+            scalers_dir: Optional[str] = None,
             batch_size: int = 16,
             num_workers: int = 4,
             dataset_kwargs: Optional[Dict[str, Any]] = None,
@@ -183,6 +183,7 @@ class ElectricityDataModule(pl.LightningDataModule):
             num_workers=self.num_workers,
             collate_fn=collate_fn,
             pin_memory=True,
+            persistent_workers=True,
         )
 
     def val_dataloader(self) -> DataLoader:
@@ -194,6 +195,7 @@ class ElectricityDataModule(pl.LightningDataModule):
             num_workers=max(1, self.num_workers // 2),
             collate_fn=collate_fn,
             pin_memory=True,
+            persistent_workers=True,
         )
 
     def test_dataloader(self) -> Optional[DataLoader]:
@@ -207,6 +209,7 @@ class ElectricityDataModule(pl.LightningDataModule):
             num_workers=max(1, self.num_workers // 2),
             collate_fn=collate_fn,
             pin_memory=True,
+            persistent_workers=True,
         )
 
     def on_train_epoch_start(self):
@@ -274,57 +277,3 @@ class ElectricityDataModule(pl.LightningDataModule):
 
         smape = masked_smoothed_smape(targets_inv_t, preds_inv_t, mask_t)
         return smape.item()
-
-
-if __name__ == "__main__":
-    # This block demonstrates how to use the DataModule.
-    base_dir = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-    train_parquet = os.path.join(base_dir, "data", "train")
-    val_parquet = os.path.join(base_dir, "data", "val")
-    test_parquet = os.path.join(base_dir, "data", "test")
-    scalers_dir = os.path.join(base_dir, "data", "scalers")
-
-    dataset_kwargs = dict(
-        input_chunk_length=96,
-        output_chunk_length=10,
-        target_cols=["high", "low", "close", "volume"],
-        timestamp_col="ExecutionTime",
-        shuffle_buffer=128,
-        stride=1,
-    )
-
-    print("--- Testing DataModule ---")
-    dm = ElectricityDataModule(
-        train_parquet=train_parquet,
-        val_parquet=val_parquet,
-        test_parquet=test_parquet,
-        scalers_dir=scalers_dir,
-        batch_size=16,
-        num_workers=0, # Set to 0 for main thread execution in this test
-        dataset_kwargs=dataset_kwargs,
-    )
-
-    print("Setting up stage 'fit'...")
-    dm.setup(stage="fit")
-
-    # Manually call this since there is no Trainer
-    dm.on_train_epoch_start()
-
-    print("Fetching one train batch...")
-    train_loader = dm.train_dataloader()
-    train_batch = next(iter(train_loader))
-    past, past_mask, future, future_mask, assets, ts = train_batch
-    print(f"  Train batch OK: past.shape={past.shape}, past_mask.shape={past_mask.shape}, asset={assets[0]}")
-
-    print("Fetching one val batch...")
-    val_loader = dm.val_dataloader()
-    val_batch = next(iter(val_loader))
-    past_v, past_mask_v, future_v, future_mask_v, assets_v, ts_v = val_batch
-    print(f"  Val batch OK: past.shape={past_v.shape}, past_mask.shape={past_mask_v.shape}, asset={assets_v[0]}")
-
-    print("Testing validation metric helper...")
-    # Use future_v for both prediction and target to test the metric function with correct shapes
-    smape = dm.compute_validation_metrics(future_v, future_v, future_mask_v, assets_v)
-    print(f"  Example sMAPE: {smape:.4f}")
-
-    print("\n--- DataModule test complete ---")

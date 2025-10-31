@@ -1,5 +1,6 @@
-# To install PyTorch with CUDA support, use the following command (check cuda version):
-# pip install -r requirements.txt --index-url https://download.pytorch.org/whl/cu128
+# To install PyTorch with CUDA support, check cuda version
+# Use the PyTorch index URL for CUDA 12.8 packages
+--extra-index-url https://download.pytorch.org/whl/cu128
 
 pandas
 numpy
@@ -14,3 +15,4 @@ torchaudio
 darts[pytorch]
 pyarrow
 seaborn
+chronos-forecasting>=2.0

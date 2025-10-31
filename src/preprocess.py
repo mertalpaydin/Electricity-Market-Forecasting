@@ -242,9 +242,11 @@ def split_data_by_year(
 
     # --- Step 3: Split and Save Data ---
     for asset_name, df in tqdm(featured_dfs.items(), desc="Splitting and saving data"):
-        # Fill any remaining NaNs with 0. This typically applies to feature columns
+        # Fill any remaining NaNs with -1. This typically applies to feature columns
         # during non-trading periods, making them neutral for the model.
-        df.fillna(0, inplace=True)
+        # Since prices and volumes are always non-negative, -1 will be a unique value that models can learn to
+        # recognize as a marker for missing data, without interfering with the actual feature values.
+        df.fillna(-1, inplace=True)
         
         train_df = df[df[timestamp_col].dt.year.isin([2021, 2022])]
         val_df = df[df[timestamp_col].dt.year == 2023]

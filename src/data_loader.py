@@ -205,7 +205,12 @@ class ElectricityPriceIterableDataset(IterableDataset):
             n = arr.shape[0]
             if n < self.min_length:
                 continue
-            
+
+            print(f"[DEBUG] Processing asset: {asset}, Length: {len(df)}")
+            if len(df) < self.min_length:
+               print(f"[DEBUG] SKIPPING asset {asset} due to length {len(df)} < {self.min_length}")
+
+
             trading_mask = df["is_trading"].values.astype(np.float32)
             scaler = self._load_scaler_for_asset(asset)
             L_in = self.input_chunk_length
