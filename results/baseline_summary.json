@@ -1,0 +1,34 @@
+{
+    "subsampling_strategy": "Stratified",
+    "best_model": "LSTM v2",
+    "models": {
+        "naive": {
+            "overall_smape": 71.40848015184747,
+            "per_target": {
+                "high": 47.77639850322157,
+                "low": 47.22740111337043,
+                "close": 47.38991221599281,
+                "volume": 143.24020877480507
+            }
+        },
+        "lstm_v1": {
+            "overall_smape": 154.790102852508,
+            "per_target": {
+                "high": 146.25450200558484,
+                "low": 146.4204058596195,
+                "close": 146.32637393777765,
+                "volume": 180.15912960705003
+            }
+        },
+        "lstm_v2": {
+            "overall_smape": 153.96067979286505,
+            "per_target": {
+                "high": 144.6024849736716,
+                "low": 144.893873975455,
+                "close": 144.69249621194936,
+                "volume": 181.6538640103842
+            }
+        }
+    },
+    "best_lstm_beats_naive": false
+}

@@ -16,3 +16,4 @@ darts[pytorch]
 pyarrow
 seaborn
 chronos-forecasting>=2.0
+autogluon

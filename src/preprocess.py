@@ -305,11 +305,13 @@ if __name__ == "__main__":
     source_parquet_dir = os.path.join(base_dir, "data", "per_asset_parquet")
     train_output_dir = os.path.join(base_dir, "data", "train")
     val_output_dir = os.path.join(base_dir, "data", "val")
+    test_output_dir = os.path.join(base_dir, "data", "test")
     scalers_output_dir = os.path.join(base_dir, "data", "scalers")
+    test_csv = os.path.join(base_dir, "data", "TEST_Reco_2024.csv")
 
     # --- Clean up previous runs ---
     # This ensures a fresh start and prevents data from old runs from contaminating the new one.
-    for dir_path in [train_output_dir, val_output_dir, scalers_output_dir]:
+    for dir_path in [train_output_dir, val_output_dir, test_output_dir, scalers_output_dir]:
         if os.path.exists(dir_path):
             logging.info(f"Cleaning contents of directory: {dir_path}")
             for f in glob.glob(os.path.join(dir_path, '*')):
@@ -332,3 +334,9 @@ if __name__ == "__main__":
         scalers_dir=scalers_output_dir
     )
     logging.info("--- Scaler Fitting Finished ---")
+
+    # 3. Process test data.
+    logging.info("--- Starting Test Data Processing ---")
+    from data_loader import split_csv_to_parquet
+    split_csv_to_parquet(csv_path=test_csv, out_dir=test_output_dir, force=True)
+    logging.info("--- Test Data Processing Finished ---")

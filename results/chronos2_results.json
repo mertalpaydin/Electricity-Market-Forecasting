@@ -1,0 +1,63 @@
+{
+    "model": "Chronos2",
+    "approaches": {
+        "multivariate_zero_shot": {
+            "description": "Single model predicting all 4 targets with 27 non-target covariates",
+            "overall_smape": 137.64643669128418,
+            "per_target": {
+                "high": 130.44753074645996,
+                "low": 129.73928451538086,
+                "close": 130.35225868225098,
+                "volume": 160.04669666290283
+            }
+        },
+        "univariate_zero_shot": {
+            "description": "4 separate models, each using 3 other targets + 27 non-target features as covariates (30 total)",
+            "overall_smape": 137.64644861221313,
+            "per_target": {
+                "high": 130.44754266738892,
+                "low": 129.73928451538086,
+                "close": 130.35225868225098,
+                "volume": 160.04669666290283
+            }
+        },
+        "univariate_finetuned": {
+            "description": "4 fine-tuned models, each using 3 other targets + 27 non-target features as covariates (30 total)",
+            "overall_smape": 169.8744773864746,
+            "per_target": {
+                "high": 145.8135962486267,
+                "low": 146.50661945343018,
+                "close": 193.38699579238892,
+                "volume": 193.7907576560974
+            }
+        }
+    },
+    "hyperparameters": {
+        "quantile_levels": "medium",
+        "batch_size": 64,
+        "lr": 0.0003,
+        "max_context_length": 96,
+        "actual_quantile_levels": [
+            0.05,
+            0.25,
+            0.5,
+            0.75,
+            0.95
+        ]
+    },
+    "finetuning_config": {
+        "method": "Univariate fine-tuning with all other features as covariates (3 targets + 27 non-targets)",
+        "steps_per_model": 20,
+        "total_steps": 80,
+        "learning_rate": 0.0003,
+        "batch_size": 64,
+        "training_files_per_feature": 100
+    },
+    "summary": {
+        "best_approach": "multivariate_zero_shot",
+        "best_smape": 137.64643669128418,
+        "baseline_target": 71.40848015184747,
+        "beats_baseline": false
+    },
+    "subsampling_strategy": "Stratified"
+}
