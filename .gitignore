@@ -9,9 +9,18 @@ __pycache__/
 # data files
 data/TEST_Reco_2024.csv
 data/TRAIN_Reco_2021_2022_2023.csv
+data/train
+data/test
+data/scalers
+data/val
+data/train_trading_only
+data/val_trading_only
+data/per_asset_parquet
+
 
 # IDEA
 .venv
+.venv1
 .idea
 .claude
 
