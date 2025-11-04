@@ -22,6 +22,8 @@ models/chronos2_finetuned_close
 models/chronos2_finetuned_high
 models/chronos2_finetuned_low
 models/chronos2_finetuned_volume
+notebooks/chronos-2-finetuned/
+
 
 # IDEA
 .venv
