@@ -17,6 +17,11 @@ data/train_trading_only
 data/val_trading_only
 data/per_asset_parquet
 
+# large model files
+models/chronos2_finetuned_close
+models/chronos2_finetuned_high
+models/chronos2_finetuned_low
+models/chronos2_finetuned_volume
 
 # IDEA
 .venv

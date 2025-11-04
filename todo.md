@@ -15,6 +15,7 @@ Quick test notebook should also be deleted
 ## Final Run
 - Give user the bash command to sequentially execute the scripts and notebooks
 - Make sure that all notebooks are saved with `_executed` suffix.
+- Deduplicate all notebooks, keep only executed ones.
 
 ## Final Report
 - In case final run works, review the output of executed files and prepare final report as a markdown.
