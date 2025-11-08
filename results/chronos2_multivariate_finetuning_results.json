@@ -1,0 +1,87 @@
+{
+  "configuration": {
+    "target_columns": [
+      "high",
+      "low",
+      "close",
+      "volume"
+    ],
+    "context_length": 24,
+    "prediction_horizon": 10,
+    "batch_size": 128,
+    "base_lr": 2e-05,
+    "warmup_phase1_epochs": 10,
+    "warmup_phase1_lr": 2e-05,
+    "warmup_phase2_epochs": 10,
+    "warmup_phase2_lr": 1e-05,
+    "burst_steps": 200,
+    "max_bursts": 20,
+    "patience": 5,
+    "lr_decay_factor": 0.75,
+    "weight_decay": 0.0001,
+    "gradient_clip": 1.0,
+    "grad_accumulation": 4,
+    "n_train_items": 10,
+    "n_val_items": 10
+  },
+  "zero_shot": {
+    "smape": 147.68836498260498
+  },
+  "post_warmup": {
+    "smape": 34.86977219581604
+  },
+  "final_validation": {
+    "smape": 34.86977219581604
+  },
+  "final_test_sample": {
+    "smape": 35.612472891807556,
+    "per_target": {
+      "high": 31.91303312778473,
+      "low": 32.02900588512421,
+      "close": 31.93524181842804,
+      "volume": 46.57260477542877
+    },
+    "n_predictions": 10885,
+    "test_files_sampled": [
+      "Sun19Q2.parquet",
+      "Sat23Q3.parquet",
+      "Tue05Q1.parquet",
+      "Wed12Q2.parquet",
+      "Fri11Q4.parquet"
+    ]
+  },
+  "burst_history": [
+    {
+      "burst": 1,
+      "smape": 36.81945204734802,
+      "lr": 1.5000000000000002e-05,
+      "is_best": false
+    },
+    {
+      "burst": 2,
+      "smape": 36.659666895866394,
+      "lr": 1.1250000000000002e-05,
+      "is_best": false
+    },
+    {
+      "burst": 3,
+      "smape": 37.6611202955246,
+      "lr": 8.437500000000002e-06,
+      "is_best": false
+    },
+    {
+      "burst": 4,
+      "smape": 36.909130215644836,
+      "lr": 6.328125000000001e-06,
+      "is_best": false
+    },
+    {
+      "burst": 5,
+      "smape": 37.7659410238266,
+      "lr": 4.7460937500000014e-06,
+      "is_best": false
+    }
+  ],
+  "best_approach": "fine_tuned",
+  "improvement_vs_baseline": 112.81859278678894
+}

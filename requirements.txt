@@ -1,0 +1,19 @@
+# To install PyTorch with CUDA support, check cuda version
+# Use the PyTorch index URL for CUDA 12.8 packages
+--extra-index-url https://download.pytorch.org/whl/cu128
+
+pandas
+numpy
+scikit-learn
+matplotlib
+lightgbm
+jupyterlab
+optuna
+torch
+torchvision
+torchaudio
+darts[pytorch]
+pyarrow
+seaborn
+chronos-forecasting>=2.0
+autogluon
